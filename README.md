@@ -67,6 +67,7 @@ Penderita insomnia cenderung mengalami kondisi **hyperarousal**, yaitu peningkat
 ├── Arduino.ino
 ├── train_model.py
 ├── realtime_diagnosis.py
+├── realtime_plotter.py
 ├── dataset.csv
 ├── model_knn_insomnia.pkl
 ├── scaler_insomnia.pkl
@@ -81,7 +82,8 @@ Penderita insomnia cenderung mengalami kondisi **hyperarousal**, yaitu peningkat
 |---|---|
 | `Arduino.ino` | Firmware Arduino untuk pembacaan sinyal EKG dan filtering EMA |
 | `train_model.py` | Pelatihan model KNN menggunakan dataset HRV |
-| `realtime_diagnosis.py` | Diagnosis insomnia secara real-time |
+| `realtime_diagnosis.py` | Diagnosis insomnia secara real-time berbasis HRV |
+| `realtime_plotter.py` | Monitoring EKG real-time dengan visualisasi grafik, ekstraksi HRV, klasifikasi KNN, evaluasi akurasi, dan penyimpanan hasil pengujian |
 | `dataset.csv` | Dataset HRV dari PhysioNet CAP Sleep Database |
 | `model_knn_insomnia.pkl` | Model KNN hasil training |
 | `scaler_insomnia.pkl` | StandardScaler hasil training |
@@ -404,6 +406,301 @@ Hal ini menunjukkan bahwa penderita insomnia memiliki:
 - HRV lebih tidak stabil
 
 ---
+
+---
+
+# 🖥️ Penjelasan realtime_plotter.py
+
+File `realtime_plotter.py` merupakan modul monitoring dan diagnosis insomnia real-time yang mengintegrasikan akuisisi sinyal EKG dari Arduino, visualisasi gelombang EKG secara langsung, ekstraksi fitur Heart Rate Variability (HRV), klasifikasi menggunakan model K-Nearest Neighbor (KNN), evaluasi hasil prediksi, serta penyimpanan hasil pengujian ke dalam file CSV.
+
+## Workflow realtime_plotter.py
+
+```text
+Sensor AD8232
+      ↓
+Arduino UNO
+      ↓
+Serial USB
+      ↓
+Realtime Plotter (Python)
+      ↓
+Visualisasi ECG
+      ↓
+Deteksi R-Peak
+      ↓
+Perhitungan HRV
+      ↓
+KNN Classification
+      ↓
+Diagnosis Insomnia
+      ↓
+Evaluasi & Penyimpanan CSV
+```
+
+## Fitur Utama
+
+### 1. Monitoring ECG Real-Time
+
+Program menampilkan sinyal ECG secara langsung menggunakan Matplotlib dengan tampilan menyerupai monitor pasien rumah sakit.
+
+Karakteristik visualisasi:
+
+- Tema gelap (dark mode)
+- Grafik berwarna hijau neon
+- Update grafik setiap 20 ms
+- Menampilkan 3 detik data ECG terakhir
+- Auto-scaling sumbu amplitudo
+
+Visualisasi ini memudahkan pengguna memantau kualitas sinyal dan memastikan elektroda terpasang dengan benar.
+
+---
+
+### 2. Akuisisi Data dari Arduino
+
+Data ECG dibaca melalui komunikasi serial:
+
+```python
+PORT_ARDUINO = 'COM13'
+BAUD_RATE = 115200
+```
+
+Arduino mengirimkan data hasil pembacaan sensor AD8232 secara kontinu dengan sampling rate:
+
+```text
+100 Hz
+```
+
+atau:
+
+```text
+100 sampel per detik
+```
+
+---
+
+### 3. Buffer Data Real-Time
+
+Program menggunakan dua buffer terpisah:
+
+#### Buffer Visualisasi
+
+Digunakan untuk menampilkan:
+
+```text
+3 detik data ECG terakhir
+```
+
+agar grafik tetap responsif.
+
+#### Buffer Machine Learning
+
+Digunakan untuk menyimpan:
+
+```text
+60 detik data ECG
+```
+
+yang akan digunakan untuk ekstraksi fitur HRV.
+
+Jumlah sampel yang dikumpulkan:
+
+```text
+100 Hz × 60 detik = 6000 sampel
+```
+
+---
+
+### 4. Deteksi Puncak R (R-Peak Detection)
+
+Setelah 60 detik data terkumpul, sistem melakukan deteksi puncak R menggunakan:
+
+```python
+find_peaks()
+```
+
+dengan parameter:
+
+```python
+distance=60
+prominence=50
+```
+
+Parameter tersebut digunakan untuk:
+
+- Mengurangi deteksi noise
+- Memastikan hanya puncak ECG yang signifikan terdeteksi
+- Membatasi BPM maksimum sekitar 100 BPM
+
+---
+
+### 5. Ekstraksi Fitur HRV
+
+Dari posisi puncak R yang berhasil dideteksi, sistem menghitung interval RR:
+
+```math
+RR = \frac{\Delta Sampel}{Sampling Rate}
+```
+
+Kemudian diekstraksi dua fitur utama:
+
+#### Mean RR
+
+Rata-rata interval antar detak jantung.
+
+```math
+MeanRR = \frac{\sum RR}{n}
+```
+
+#### SDNN
+
+Standar deviasi interval RR sebagai indikator variabilitas detak jantung.
+
+```math
+SDNN = std(RR)
+```
+
+---
+
+### 6. Perhitungan BPM
+
+Heart Rate dihitung menggunakan:
+
+```math
+BPM = \frac{60}{MeanRR}
+```
+
+Contoh:
+
+```text
+MeanRR = 0.80 detik
+```
+
+maka:
+
+```text
+BPM = 75 bpm
+```
+
+---
+
+### 7. Klasifikasi Menggunakan KNN
+
+Fitur:
+
+```text
+[Mean RR, SDNN]
+```
+
+dilakukan normalisasi menggunakan:
+
+```text
+StandardScaler
+```
+
+kemudian diproses oleh model:
+
+```text
+K-Nearest Neighbor (KNN)
+```
+
+Output sistem:
+
+| Label | Diagnosis |
+|---|---|
+| 0 | Normal |
+| 1 | Insomnia |
+
+---
+
+### 8. Evaluasi Prediksi
+
+Pengguna memasukkan kondisi sebenarnya (ground truth):
+
+```text
+0 = Normal
+1 = Insomnia
+```
+
+Setiap hasil prediksi dibandingkan dengan label sebenarnya untuk menentukan:
+
+```text
+BENAR
+atau
+SALAH
+```
+
+---
+
+### 9. Perhitungan Akurasi Real-Time
+
+Setelah pengujian selesai, sistem menghitung:
+
+```math
+Accuracy = \frac{Jumlah Prediksi Benar}{Total Pengujian} \times 100\%
+```
+
+untuk mengevaluasi performa model selama proses pengujian berlangsung.
+
+---
+
+### 10. Penyimpanan Hasil Otomatis
+
+Seluruh hasil pengujian disimpan dalam file CSV.
+
+Contoh:
+
+```text
+Hasil_Uji_Pasien_A_01.csv
+```
+
+Isi file meliputi:
+
+- Nama subjek
+- BPM
+- Mean RR
+- SDNN
+- Label sebenarnya
+- Prediksi sistem
+- Status evaluasi
+
+Jika file sudah ada, sistem akan otomatis membuat file baru:
+
+```text
+Hasil_Uji_Pasien_A_02.csv
+Hasil_Uji_Pasien_A_03.csv
+```
+
+dan seterusnya.
+
+---
+
+### Contoh Output Sistem
+
+```text
+Fitur Klinis -> BPM: 74 bpm
+Mean RR      : 0.8100 s
+SDNN         : 0.1300 s
+
+🚨 DIAGNOSIS SISTEM:
+TERINDIKASI INSOMNIA
+```
+
+atau
+
+```text
+Fitur Klinis -> BPM: 72 bpm
+Mean RR      : 0.8300 s
+SDNN         : 0.0800 s
+
+✅ DIAGNOSIS SISTEM:
+DETAK JANTUNG NORMAL
+```
+
+---
+
+### Fungsi dalam Sistem IoMT
+
+Pada arsitektur IoMT yang dikembangkan, `realtime_plotter.py` berperan sebagai pusat pemrosesan (*edge computing layer*) yang menerima data ECG dari perangkat akuisisi berbasis Arduino, melakukan analisis HRV secara real-time, menampilkan kondisi pasien melalui antarmuka visual, serta menghasilkan diagnosis otomatis menggunakan algoritma machine learning tanpa memerlukan pemrosesan cloud.
 
 # ✅ Kesimpulan
 
